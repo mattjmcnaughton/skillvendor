@@ -85,6 +85,15 @@ Opens `~/.config/skillvendor/skills.yaml` in `$VISUAL`, then `$EDITOR`, then `vi
 ### Manifest format (`skills.yaml`)
 
 ```yaml
+# Optional. Directories that managed skills are symlinked into.
+# When omitted, defaults to ~/.claude/skills and ~/.codex/skills.
+# When set, it REPLACES the defaults — include them explicitly if you still want them.
+# `~` and `~/...` are expanded against $HOME (or $SKILLVENDOR_HOME if set).
+targets:
+  - ~/.claude/skills
+  - ~/.codex/skills
+  - ~/projects/team-skills
+
 skills:
   - repo: github.com/anthropics/skills
     ref: main

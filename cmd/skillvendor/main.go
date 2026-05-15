@@ -77,8 +77,8 @@ func loadLock() (*config.Lock, error) {
 	return config.Load(p)
 }
 
-func newInstaller(c *cache.Cache) (*symlink.Installer, error) {
-	targets, err := symlink.DefaultTargets()
+func newInstaller(c *cache.Cache, m *manifest.Manifest) (*symlink.Installer, error) {
+	targets, err := m.ResolvedTargets()
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func cmdRemove(args []string) error {
 		if err != nil {
 			return err
 		}
-		inst, err := newInstaller(c)
+		inst, err := newInstaller(c, m)
 		if err != nil {
 			return err
 		}
@@ -206,7 +206,7 @@ func cmdSync(args []string) error {
 	if err != nil {
 		return err
 	}
-	inst, err := newInstaller(c)
+	inst, err := newInstaller(c, m)
 	if err != nil {
 		return err
 	}

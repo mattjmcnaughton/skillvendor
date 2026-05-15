@@ -148,6 +148,44 @@ func TestEndToEndCLI(t *testing.T) {
 	}
 }
 
+func TestEndToEndCustomTargets(t *testing.T) {
+	bin := buildBinary(t)
+	repo := fixtureSkillsRepo(t)
+	home := t.TempDir()
+	repoArg := "file://" + repo
+
+	customA := filepath.Join(home, "custom-a")
+	customB := filepath.Join(home, "custom-b")
+	manifestDir := filepath.Join(home, ".config", "skillvendor")
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifestBody := "targets:\n  - " + customA + "\n  - ~/custom-b\nskills: []\n"
+	if err := os.WriteFile(filepath.Join(manifestDir, "skills.yaml"), []byte(manifestBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := runCLI(t, bin, home, "add", repoArg, "--path", "document-skills", "--include", "pdf"); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	if out, err := runCLI(t, bin, home, "sync"); err != nil {
+		t.Fatalf("sync: %v\n%s", err, out)
+	}
+
+	for _, tgt := range []string{customA, customB} {
+		link := filepath.Join(tgt, "pdf")
+		if _, err := os.Lstat(link); err != nil {
+			t.Errorf("expected symlink at %s: %v", link, err)
+		}
+	}
+	for _, tgt := range []string{".claude/skills", ".codex/skills"} {
+		link := filepath.Join(home, tgt, "pdf")
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			t.Errorf("default target should not be used; got %s: %v", link, err)
+		}
+	}
+}
+
 func TestEndToEndConflictRefusal(t *testing.T) {
 	bin := buildBinary(t)
 	repo := fixtureSkillsRepo(t)

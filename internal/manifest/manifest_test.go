@@ -72,6 +72,44 @@ func TestEntryKey(t *testing.T) {
 	}
 }
 
+func TestResolvedTargetsDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLVENDOR_HOME", home)
+	m := &Manifest{}
+	got, err := m.ResolvedTargets()
+	if err != nil {
+		t.Fatalf("ResolvedTargets: %v", err)
+	}
+	want := []string{
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".codex", "skills"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d targets, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("target %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestResolvedTargetsExpandsAndReplaces(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLVENDOR_HOME", home)
+	m := &Manifest{Targets: []string{"~/custom/a", "~", "/abs/path"}}
+	got, err := m.ResolvedTargets()
+	if err != nil {
+		t.Fatalf("ResolvedTargets: %v", err)
+	}
+	want := []string{filepath.Join(home, "custom", "a"), home, "/abs/path"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("target %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestRejectsInvalidYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "skills.yaml")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mattjmcnaughton/skillvendor/internal/paths"
 	"gopkg.in/yaml.v3"
@@ -47,9 +48,53 @@ func (e Entry) Validate() error {
 }
 
 type Manifest struct {
-	Skills []Entry `yaml:"skills"`
+	// Targets are directories that managed skills are symlinked into. When
+	// empty, DefaultTargets is used. `~` and `~/...` are expanded against
+	// paths.Home (so SKILLVENDOR_HOME redirects them too); absolute paths
+	// pass through unchanged.
+	Targets []string `yaml:"targets,omitempty"`
+	Skills  []Entry  `yaml:"skills"`
 
 	path string
+}
+
+// DefaultTargets returns ~/.claude/skills and ~/.codex/skills. Honors SKILLVENDOR_HOME.
+func DefaultTargets() ([]string, error) {
+	home, err := paths.Home()
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".codex", "skills"),
+	}, nil
+}
+
+// ResolvedTargets returns the target directories with `~` expanded. If the
+// manifest declares no targets, the defaults are used.
+func (m *Manifest) ResolvedTargets() ([]string, error) {
+	if len(m.Targets) == 0 {
+		return DefaultTargets()
+	}
+	home, err := paths.Home()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(m.Targets))
+	for i, t := range m.Targets {
+		out[i] = expandHome(t, home)
+	}
+	return out, nil
+}
+
+func expandHome(p, home string) string {
+	if p == "~" {
+		return home
+	}
+	if strings.HasPrefix(p, "~/") {
+		return filepath.Join(home, p[2:])
+	}
+	return p
 }
 
 // DefaultPath returns ~/.config/skillvendor/skills.yaml. Honors SKILLVENDOR_HOME.

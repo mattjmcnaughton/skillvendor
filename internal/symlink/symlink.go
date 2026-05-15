@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/mattjmcnaughton/skillvendor/internal/paths"
 )
 
 // Installer manages symlinks under each target directory. A symlink is
@@ -19,18 +17,6 @@ import (
 type Installer struct {
 	targets   []string
 	cacheRoot string
-}
-
-// DefaultTargets returns ~/.claude/skills and ~/.codex/skills. Honors SKILLVENDOR_HOME.
-func DefaultTargets() ([]string, error) {
-	home, err := paths.Home()
-	if err != nil {
-		return nil, err
-	}
-	return []string{
-		filepath.Join(home, ".claude", "skills"),
-		filepath.Join(home, ".codex", "skills"),
-	}, nil
 }
 
 func New(targets []string, cacheRoot string) *Installer {
