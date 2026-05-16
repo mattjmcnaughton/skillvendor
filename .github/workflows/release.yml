@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    outputs:
+      new-release-published: ${{ steps.semantic.outputs.new-release-published }}
+      new-release-version: ${{ steps.semantic.outputs.new-release-version }}
+
+    steps:
+      - name: Checkout code
+        # actions/checkout v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        # actions/setup-node v4.4.0
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.x"
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install release dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Release
+        id: semantic
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm exec semantic-release
+
+  build-binaries:
+    name: Build ${{ matrix.asset-name }}
+    runs-on: ubuntu-latest
+    needs: release
+    if: needs.release.outputs.new-release-published == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - asset-name: skillvendor-linux-x86_64
+            goos: linux
+            goarch: amd64
+          - asset-name: skillvendor-linux-arm64
+            goos: linux
+            goarch: arm64
+          - asset-name: skillvendor-macos-x86_64
+            goos: darwin
+            goarch: amd64
+          - asset-name: skillvendor-macos-arm64
+            goos: darwin
+            goarch: arm64
+
+    steps:
+      - name: Checkout release tag
+        # actions/checkout v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: v${{ needs.release.outputs.new-release-version }}
+
+      - name: Setup Go
+        # actions/setup-go v5.5.0
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: >
+          go build
+          -trimpath
+          -ldflags "-s -w -X github.com/mattjmcnaughton/skillvendor/internal/version.Version=${{ needs.release.outputs.new-release-version }}"
+          -o ${{ matrix.asset-name }}
+          ./cmd/skillvendor
+
+      - name: Package binary
+        run: tar czf ${{ matrix.asset-name }}.tar.gz ${{ matrix.asset-name }}
+
+      - name: Upload binaries to release
+        # softprops/action-gh-release v2.4.1
+        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090
+        with:
+          tag_name: v${{ needs.release.outputs.new-release-version }}
+          files: |
+            ${{ matrix.asset-name }}
+            ${{ matrix.asset-name }}.tar.gz
