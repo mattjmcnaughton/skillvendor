@@ -1,0 +1,19 @@
+{
+  "name": "skillvendor-release",
+  "version": "0.0.0-development",
+  "private": true,
+  "packageManager": "pnpm@11.1.2",
+  "description": "Release automation for skillvendor.",
+  "scripts": {
+    "semantic-release": "semantic-release"
+  },
+  "devDependencies": {
+    "@semantic-release/changelog": "6.0.3",
+    "@semantic-release/commit-analyzer": "13.0.0",
+    "@semantic-release/exec": "7.0.3",
+    "@semantic-release/git": "10.0.1",
+    "@semantic-release/github": "11.0.1",
+    "@semantic-release/release-notes-generator": "14.0.1",
+    "semantic-release": "24.2.3"
+  }
+}

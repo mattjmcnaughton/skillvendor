@@ -16,6 +16,7 @@ import (
 	"github.com/mattjmcnaughton/skillvendor/internal/config"
 	"github.com/mattjmcnaughton/skillvendor/internal/manifest"
 	"github.com/mattjmcnaughton/skillvendor/internal/symlink"
+	"github.com/mattjmcnaughton/skillvendor/internal/version"
 )
 
 const usage = `skillvendor — vendor remote skills from git repos.
@@ -26,6 +27,7 @@ Usage:
   skillvendor sync [--update]
   skillvendor list
   skillvendor edit
+  skillvendor version
 `
 
 func main() {
@@ -48,6 +50,8 @@ func main() {
 		err = cmdList(args)
 	case "edit":
 		err = cmdEdit(args)
+	case "version", "--version", "-v":
+		err = cmdVersion(args)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
@@ -328,6 +332,14 @@ func cmdList(args []string) error {
 		}
 		fmt.Printf("%s\n  ref:%s  sha:%s  installed:[%s]\n", e.Key(), e.Ref, shaStr, installed)
 	}
+	return nil
+}
+
+func cmdVersion(args []string) error {
+	if len(args) > 0 {
+		return errors.New("version takes no arguments")
+	}
+	fmt.Printf("skillvendor %s\n", version.Version)
 	return nil
 }
 

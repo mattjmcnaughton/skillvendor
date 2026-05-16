@@ -67,6 +67,23 @@ func runCLI(t *testing.T, bin, home string, args ...string) (string, error) {
 	return out.String(), err
 }
 
+func TestVersionCommand(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "skillvendor")
+	cmd := exec.Command("go", "build", "-ldflags", "-X github.com/mattjmcnaughton/skillvendor/internal/version.Version=1.2.3", "-o", bin, ".")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, out)
+	}
+
+	out, err := runCLI(t, bin, t.TempDir(), "version")
+	if err != nil {
+		t.Fatalf("version: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(out) != "skillvendor 1.2.3" {
+		t.Fatalf("unexpected version output: %q", out)
+	}
+}
+
 func TestEndToEndCLI(t *testing.T) {
 	bin := buildBinary(t)
 	repo := fixtureSkillsRepo(t)
