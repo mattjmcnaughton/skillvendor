@@ -110,3 +110,73 @@ func TestResolveMissingRef(t *testing.T) {
 		t.Error("expected error for missing ref")
 	}
 }
+
+// TestResolveRefPrefersHeads guards against a bug where `git ls-remote <url>
+// main` does suffix-style matching and returns multiple lines (e.g. a sibling
+// branch `refs/heads/dev/main` and a remote-tracking `refs/remotes/matt/main`
+// alongside the real `refs/heads/main`). The previous code blindly took
+// lines[0], which is the alphabetically-first match and not necessarily the
+// branch the user meant.
+func TestResolveRefPrefersHeads(t *testing.T) {
+	repoDir, oldSHA := fixtureRepo(t)
+	// Advance refs/heads/main with a second commit; decoys (planted below)
+	// stay pinned at oldSHA. The SHA gap is what makes a wrong pick observable.
+	if err := os.WriteFile(filepath.Join(repoDir, "second.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, repoDir, "git", "add", ".")
+	mustRun(t, repoDir, "git", "commit", "--quiet", "-m", "second")
+	out, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse: %v", err)
+	}
+	newHead := strings.TrimSpace(string(out))
+	// refs/heads/dev/main sorts before refs/heads/main, so ls-remote returns
+	// it first; this is what made lines[0] pick the wrong SHA in practice.
+	mustRun(t, repoDir, "git", "update-ref", "refs/heads/dev/main", oldSHA)
+	// refs/remotes/matt/main is the other variant from the original bug
+	// report — also matched by the unqualified `main` pattern.
+	mustRun(t, repoDir, "git", "update-ref", "refs/remotes/matt/main", oldSHA)
+
+	c := New(t.TempDir())
+	resolved, err := c.ResolveRef("file://"+repoDir, "main")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if resolved != newHead {
+		t.Errorf("resolved %s, want %s (refs/heads/main)", resolved, newHead)
+	}
+}
+
+// TestResolveRefQualifiedPassThrough ensures that a ref containing "/" is
+// passed to ls-remote unchanged, so callers can pin exotic refs like
+// refs/pull/<n>/head that wouldn't be found under refs/heads or refs/tags.
+func TestResolveRefQualifiedPassThrough(t *testing.T) {
+	repoDir, headSHA := fixtureRepo(t)
+	mustRun(t, repoDir, "git", "update-ref", "refs/pull/1/head", headSHA)
+
+	c := New(t.TempDir())
+	resolved, err := c.ResolveRef("file://"+repoDir, "refs/pull/1/head")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if resolved != headSHA {
+		t.Errorf("resolved %s, want %s", resolved, headSHA)
+	}
+}
+
+// TestResolveRefAnnotatedTag ensures an unqualified tag name still
+// dereferences to the commit it points at, not the tag object's own SHA.
+func TestResolveRefAnnotatedTag(t *testing.T) {
+	repoDir, headSHA := fixtureRepo(t)
+	mustRun(t, repoDir, "git", "tag", "-a", "v1.0.0", "-m", "release")
+
+	c := New(t.TempDir())
+	resolved, err := c.ResolveRef("file://"+repoDir, "v1.0.0")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if resolved != headSHA {
+		t.Errorf("resolved %s, want %s (commit SHA, not tag object)", resolved, headSHA)
+	}
+}

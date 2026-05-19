@@ -68,25 +68,69 @@ func (c *Cache) PathFor(repo, sha string) string {
 
 // ResolveRef returns the commit SHA that the remote currently resolves <ref>
 // to. Annotated tags resolve to the commit they point at.
+//
+// For an unqualified ref (no "/"), we query both refs/heads/<ref> and
+// refs/tags/<ref> explicitly and prefer the heads result. This avoids
+// `ls-remote`'s suffix-style matching, which would otherwise return decoy
+// refs like refs/heads/dev/<ref> or refs/remotes/<x>/<ref> and we'd
+// silently pick whichever the server printed first. Fully qualified refs
+// (containing "/") pass through unchanged so callers can pin exotic refs
+// like refs/pull/<n>/head.
 func (c *Cache) ResolveRef(repo, ref string) (string, error) {
 	if ref == "" {
 		return "", errors.New("ref is required")
 	}
 	url := cloneURL(repo)
-	out, err := exec.Command("git", "ls-remote", url, ref).Output()
-	if err != nil {
-		return "", fmt.Errorf("ls-remote %s %s: %w", url, ref, err)
+
+	patterns := []string{ref}
+	if !strings.Contains(ref, "/") {
+		// Include refs/tags/<ref>^{} so annotated tags surface their peeled
+		// commit SHA — ls-remote filters peeled lines out unless a pattern
+		// matches them explicitly.
+		patterns = []string{
+			"refs/heads/" + ref,
+			"refs/tags/" + ref,
+			"refs/tags/" + ref + "^{}",
+		}
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) == 0 || lines[0] == "" {
+
+	args := append([]string{"ls-remote", url}, patterns...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return "", fmt.Errorf("ls-remote %s %s: %w", url, strings.Join(patterns, " "), err)
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed == "" && !strings.Contains(ref, "/") {
+		// Qualified query found nothing — fall back to the raw pattern so
+		// unusual unqualified refs (e.g. namespaces we don't enumerate) still
+		// resolve.
+		out, err = exec.Command("git", "ls-remote", url, ref).Output()
+		if err != nil {
+			return "", fmt.Errorf("ls-remote %s %s: %w", url, ref, err)
+		}
+		trimmed = strings.TrimSpace(string(out))
+	}
+	if trimmed == "" {
 		return "", fmt.Errorf("ref %q not found in %s", ref, repo)
 	}
-	// Prefer ^{} (annotated tag dereference) if present.
+	lines := strings.Split(trimmed, "\n")
+
+	// Prefer ^{} (annotated tag dereference) if present; otherwise prefer
+	// refs/heads/* over refs/tags/* (a branch named the same as a tag wins);
+	// otherwise take the first line.
 	pick := lines[0]
 	for _, l := range lines {
 		if strings.HasSuffix(l, "^{}") {
 			pick = l
 			break
+		}
+	}
+	if !strings.HasSuffix(pick, "^{}") {
+		for _, l := range lines {
+			if fields := strings.Fields(l); len(fields) >= 2 && strings.HasPrefix(fields[1], "refs/heads/") {
+				pick = l
+				break
+			}
 		}
 	}
 	fields := strings.Fields(pick)
