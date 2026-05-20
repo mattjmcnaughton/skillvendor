@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/mattjmcnaughton/skillvendor/compare/v1.0.0...v1.0.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* **cache:** resolve unqualified refs against heads and tags explicitly ([22768ca](https://github.com/mattjmcnaughton/skillvendor/commit/22768ca693348a44c24393b666ee872c82ec82a1))
+
 # 1.0.0 (2026-05-16)
 
 
