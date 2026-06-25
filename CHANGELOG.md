@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/mattjmcnaughton/skillvendor/compare/v1.0.1...v1.1.0) (2026-06-25)
+
+
+### Features
+
+* **cache:** support pinning a skill ref to a commit SHA ([b3ffb5a](https://github.com/mattjmcnaughton/skillvendor/commit/b3ffb5abe3cd1b48a30a97360c9cebee1134274a))
+
 ## [1.0.1](https://github.com/mattjmcnaughton/skillvendor/compare/v1.0.0...v1.0.1) (2026-05-20)
 
 
