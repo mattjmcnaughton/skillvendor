@@ -165,6 +165,77 @@ func TestResolveRefQualifiedPassThrough(t *testing.T) {
 	}
 }
 
+// TestResolveRefFullSHA ensures a full-length commit SHA is treated as a pin
+// and returned verbatim without any remote lookup. The repo URL points
+// nowhere, so any ls-remote attempt would error — a clean return proves the
+// short-circuit.
+func TestResolveRefFullSHA(t *testing.T) {
+	sha := "4f1a2b3c4d5e6f7890abcdef1234567890abcdef" // 40 hex chars
+	c := New(t.TempDir())
+	resolved, err := c.ResolveRef("file:///nonexistent/repo", sha)
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if resolved != sha {
+		t.Errorf("resolved %s, want %s", resolved, sha)
+	}
+}
+
+// TestResolveRefSHA256 ensures a full-length SHA-256 object id (64 hex chars)
+// is also inferred as a pin and returned verbatim without a remote lookup.
+func TestResolveRefSHA256(t *testing.T) {
+	sha := strings.Repeat("ab", 32) // 64 hex chars
+	c := New(t.TempDir())
+	resolved, err := c.ResolveRef("file:///nonexistent/repo", sha)
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if resolved != sha {
+		t.Errorf("resolved %s, want %s", resolved, sha)
+	}
+}
+
+// TestResolveRefNonHexNotPin guards the inference heuristic against false
+// positives: a 40-character string that isn't valid hex is a branch/tag name,
+// not a commit, and must still resolve through ls-remote.
+func TestResolveRefNonHexNotPin(t *testing.T) {
+	repoDir, headSHA := fixtureRepo(t)
+	branch := strings.Repeat("g", 40) // 40 chars, but 'g' isn't hex
+	mustRun(t, repoDir, "git", "branch", branch)
+
+	c := New(t.TempDir())
+	resolved, err := c.ResolveRef("file://"+repoDir, branch)
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if resolved != headSHA {
+		t.Errorf("resolved %s, want %s (branch resolved via ls-remote)", resolved, headSHA)
+	}
+}
+
+// TestResolveRefForcedSHAInvalid ensures a "sha:" prefix wrapping a non-hex
+// value is a hard error rather than being passed to ls-remote or checkout.
+func TestResolveRefForcedSHAInvalid(t *testing.T) {
+	c := New(t.TempDir())
+	if _, err := c.ResolveRef("file:///nonexistent/repo", "sha:not-hex"); err == nil {
+		t.Error("expected error for non-hex sha pin")
+	}
+}
+
+// TestResolveRefForcedSHA ensures a "sha:" prefix forces commit-pin treatment
+// even for an abbreviated SHA we couldn't safely infer on our own. The prefix
+// is stripped from the returned value, and no remote lookup happens.
+func TestResolveRefForcedSHA(t *testing.T) {
+	c := New(t.TempDir())
+	resolved, err := c.ResolveRef("file:///nonexistent/repo", "sha:4f1a2b3")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if resolved != "4f1a2b3" {
+		t.Errorf("resolved %q, want %q", resolved, "4f1a2b3")
+	}
+}
+
 // TestResolveRefAnnotatedTag ensures an unqualified tag name still
 // dereferences to the commit it points at, not the tag object's own SHA.
 func TestResolveRefAnnotatedTag(t *testing.T) {

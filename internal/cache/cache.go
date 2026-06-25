@@ -80,6 +80,9 @@ func (c *Cache) ResolveRef(repo, ref string) (string, error) {
 	if ref == "" {
 		return "", errors.New("ref is required")
 	}
+	if sha, ok, err := pinnedSHA(ref); ok || err != nil {
+		return sha, err
+	}
 	url := cloneURL(repo)
 
 	patterns := []string{ref}
@@ -138,6 +141,38 @@ func (c *Cache) ResolveRef(repo, ref string) (string, error) {
 		return "", fmt.Errorf("unexpected ls-remote output: %q", out)
 	}
 	return fields[0], nil
+}
+
+// pinnedSHA reports whether ref names a commit directly rather than a
+// branch/tag that needs resolving. A full-length hex string (40 chars for
+// SHA-1, 64 for SHA-256) is inferred as a commit pin. A "sha:" prefix forces
+// commit treatment for any hex string — including abbreviated SHAs we can't
+// safely tell apart from ref names on our own. It returns (sha, true, nil)
+// for a pin, ("", false, nil) for a normal ref, and an error if a forced pin
+// isn't valid hex.
+func pinnedSHA(ref string) (string, bool, error) {
+	if rest, forced := strings.CutPrefix(ref, "sha:"); forced {
+		if !isHex(rest) {
+			return "", true, fmt.Errorf("invalid sha pin %q: not a hex commit id", ref)
+		}
+		return rest, true, nil
+	}
+	if (len(ref) == 40 || len(ref) == 64) && isHex(ref) {
+		return ref, true, nil
+	}
+	return "", false, nil
+}
+
+func isHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // Fetch ensures the (repo, sha) worktree exists locally and returns its path.
