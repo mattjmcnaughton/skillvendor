@@ -36,7 +36,11 @@ skillvendor add github.com/anthropics/skills --ref main --path document-skills
 skillvendor add github.com/foo/bar --ref v1.2.0 --include example,helper
 ```
 
-- `--ref` defaults to `main`.
+- `--ref` defaults to `main`. It accepts a branch, a tag, a fully-qualified ref
+  (e.g. `refs/pull/1/head`), or a commit SHA. A full-length SHA (40 hex chars,
+  or 64 for SHA-256) is recognized as a pin automatically; prefix any SHA with
+  `sha:` (e.g. `sha:4f1a2b3`) to force pinning, including abbreviated SHAs.
+  A pinned SHA resolves to itself, so `sync --update` never moves it.
 - `--path` points to a directory **containing skills**. Each immediate subdir with a `SKILL.md` becomes one installed skill. If omitted, the repo root is treated as that directory.
 - `--include` and `--exclude` filter by subdir basename. They are mutually exclusive.
 
@@ -103,7 +107,15 @@ skills:
   - repo: github.com/foo/bar
     ref: v1.2.0
     exclude: [experimental]
+  - repo: github.com/baz/qux
+    ref: 4f1a2b3c4d5e6f7890abcdef1234567890abcdef  # pin to a commit
+  - repo: github.com/baz/qux
+    ref: sha:4f1a2b3                               # force-pin an abbreviated SHA
 ```
+
+A `ref` that is a full-length commit SHA (or any SHA prefixed with `sha:`) is
+treated as a pin: it resolves to itself with no network lookup, so `sync
+--update` leaves it in place.
 
 ### Lockfile format (`skillvendor.lock`)
 
