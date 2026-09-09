@@ -20,12 +20,27 @@ just install
 ## Commands
 
 ```
+skillvendor init [--edit] [--force]
 skillvendor add <repo> [--ref <ref>] [--path <dir>] [--include a,b] [--exclude c,d]
 skillvendor remove <repo>[#<path>]
 skillvendor sync [--update]
 skillvendor list
 skillvendor edit
 ```
+
+### `init`
+
+Creates `~/.config/skillvendor/skills.yaml` from an annotated template that documents every field. The template declares no skills, so `add`, `sync`, and `list` all work immediately afterwards.
+
+```
+skillvendor init            # write the template manifest
+skillvendor init --edit     # write it, then open it in $VISUAL / $EDITOR / vi
+skillvendor init --force    # overwrite an existing manifest
+```
+
+- Refuses to overwrite an existing manifest unless `--force` is given.
+- `--edit` behaves like `skillvendor edit`: the manifest is reloaded and validated once the editor exits.
+- `init` is optional. `add` and `edit` create the file on demand if it doesn't exist.
 
 ### `add`
 
@@ -70,7 +85,7 @@ Shows every manifest entry alongside the ref it tracks and the SHA it's locked t
 
 ### `edit`
 
-Opens `~/.config/skillvendor/skills.yaml` in `$VISUAL`, then `$EDITOR`, then `vi`. After the editor exits, the manifest is reloaded and validated; an invalid edit prints an error (and the broken file remains on disk for you to fix).
+Opens `~/.config/skillvendor/skills.yaml` in `$VISUAL`, then `$EDITOR`, then `vi`. If the manifest doesn't exist yet it is seeded from the same template `init` writes. After the editor exits, the manifest is reloaded and validated; an invalid edit prints an error (and the broken file remains on disk for you to fix).
 
 ## File layout
 

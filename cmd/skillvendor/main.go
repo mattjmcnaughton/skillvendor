@@ -22,6 +22,7 @@ import (
 const usage = `skillvendor — vendor remote skills from git repos.
 
 Usage:
+  skillvendor init [--edit] [--force]
   skillvendor add <repo> [--ref <ref>] [--path <dir>] [--include a,b] [--exclude c,d]
   skillvendor remove <repo>[#<path>]
   skillvendor sync [--update]
@@ -40,6 +41,8 @@ func main() {
 
 	var err error
 	switch sub {
+	case "init":
+		err = cmdInit(args)
 	case "add":
 		err = cmdAdd(args)
 	case "remove", "rm":
@@ -343,22 +346,53 @@ func cmdVersion(args []string) error {
 	return nil
 }
 
+func cmdInit(args []string) error {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	edit := fs.Bool("edit", false, "open the manifest in $VISUAL/$EDITOR after creating it")
+	force := fs.Bool("force", false, "overwrite an existing manifest")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("init takes no positional arguments")
+	}
+	path, err := manifest.DefaultPath()
+	if err != nil {
+		return err
+	}
+	if err := manifest.WriteTemplate(path, *force); err != nil {
+		return err
+	}
+	fmt.Printf("wrote %s\n", path)
+	if !*edit {
+		fmt.Println("Run `skillvendor edit` to open it, or `skillvendor add <repo>` to register a source.")
+		return nil
+	}
+	return editAndValidate(path)
+}
+
 func cmdEdit(args []string) error {
 	if len(args) > 0 {
 		return errors.New("edit takes no arguments")
 	}
-	m, err := loadManifest()
+	path, err := manifest.DefaultPath()
 	if err != nil {
 		return err
 	}
-	path := m.Path()
-	// Touch the manifest so the editor opens an existing file (avoids "new file" prompts).
+	// Seed the manifest so the editor opens an existing file (avoids "new
+	// file" prompts) and first-time users get the annotated template.
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := m.Save(); err != nil {
+		if err := manifest.WriteTemplate(path, false); err != nil {
 			return err
 		}
 	}
+	return editAndValidate(path)
+}
 
+// editAndValidate opens the manifest at path in the user's editor, then
+// reloads and validates it. An invalid edit is reported as an error; the
+// file is left on disk as-is for the user to fix.
+func editAndValidate(path string) error {
 	editor := firstNonEmpty(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
 	cmd := exec.Command(editor, path)
 	cmd.Stdin = os.Stdin
@@ -368,7 +402,6 @@ func cmdEdit(args []string) error {
 		return fmt.Errorf("editor exited with error: %w", err)
 	}
 
-	// Validate post-edit: reload + check for name collisions across entries.
 	reloaded, err := manifest.Load(path)
 	if err != nil {
 		return fmt.Errorf("manifest is invalid after edit: %w", err)
