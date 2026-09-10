@@ -194,3 +194,61 @@ func (m *Manifest) Remove(repo, path string) bool {
 	m.Skills = append(m.Skills[:i], m.Skills[i+1:]...)
 	return true
 }
+
+// Template is the annotated starter manifest written by `skillvendor init`.
+// It parses to an empty manifest (default targets, no skills) so every
+// command works immediately after init; the comments document the schema.
+const Template = `# skillvendor manifest.
+#
+# Register remote skill sources here (or via ` + "`skillvendor add`" + `), then run
+# ` + "`skillvendor sync`" + ` to install them. ` + "`skillvendor edit`" + ` opens this file.
+
+# Optional. Directories that managed skills are symlinked into.
+# When omitted, defaults to ~/.claude/skills and ~/.codex/skills.
+# When set, it REPLACES the defaults — include them explicitly if you still want them.
+# targets:
+#   - ~/.claude/skills
+#   - ~/.codex/skills
+
+skills: []
+#  - repo: github.com/anthropics/skills
+#    ref: main                    # branch, tag, or commit SHA (default: main)
+#    path: document-skills        # directory containing skills (default: repo root)
+#    include: [pdf, docx]         # optional allowlist of skill subdirs
+#    # exclude: [pptx]            # optional denylist; mutually exclusive with include
+`
+
+// WriteTemplate writes Template to path, creating parent directories as
+// needed. If a file already exists at path it is left untouched and an error
+// wrapping os.ErrExist is returned; pass force=true to overwrite it.
+func WriteTemplate(path string, force bool) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if !force {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+	f, err := os.OpenFile(path, flags, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return &existsError{path: path}
+		}
+		return err
+	}
+	if _, err := f.WriteString(Template); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// existsError reports that WriteTemplate found a manifest already at path.
+// It matches os.ErrExist under errors.Is.
+type existsError struct{ path string }
+
+func (e *existsError) Error() string {
+	return e.path + " already exists (use --force to overwrite)"
+}
+
+func (e *existsError) Is(target error) bool { return target == os.ErrExist }

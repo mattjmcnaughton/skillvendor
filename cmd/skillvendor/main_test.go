@@ -226,3 +226,113 @@ func TestEndToEndConflictRefusal(t *testing.T) {
 		t.Errorf("conflicting dir should be preserved: %v", err)
 	}
 }
+
+func TestInitCommand(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	manifestPath := filepath.Join(home, ".config", "skillvendor", "skills.yaml")
+
+	out, err := runCLI(t, bin, home, "init")
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, manifestPath) {
+		t.Errorf("init should print the manifest path; got %q", out)
+	}
+	body, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("manifest not created: %v", err)
+	}
+	if !strings.Contains(string(body), "skills:") || !strings.Contains(string(body), "targets:") {
+		t.Errorf("template missing expected keys:\n%s", body)
+	}
+
+	// The template-seeded manifest is usable by every other command.
+	if out, err := runCLI(t, bin, home, "list"); err != nil {
+		t.Fatalf("list after init: %v\n%s", err, out)
+	} else if !strings.Contains(out, "no entries") {
+		t.Errorf("list after init should report no entries; got %q", out)
+	}
+
+	// Re-running init refuses to clobber the existing manifest.
+	if err := os.WriteFile(manifestPath, []byte("skills:\n  - repo: github.com/foo/bar\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runCLI(t, bin, home, "init"); err == nil {
+		t.Fatalf("second init should fail without --force; got:\n%s", out)
+	} else if !strings.Contains(out, "already exists") {
+		t.Errorf("expected 'already exists' error; got %q", out)
+	}
+	if body, _ := os.ReadFile(manifestPath); !strings.Contains(string(body), "github.com/foo/bar") {
+		t.Errorf("existing manifest must be preserved; got:\n%s", body)
+	}
+
+	// --force overwrites.
+	if out, err := runCLI(t, bin, home, "init", "--force"); err != nil {
+		t.Fatalf("init --force: %v\n%s", err, out)
+	}
+	if body, _ := os.ReadFile(manifestPath); strings.Contains(string(body), "github.com/foo/bar") {
+		t.Errorf("--force should have replaced the manifest; got:\n%s", body)
+	}
+}
+
+// fakeEditor writes a shell script that overwrites its file argument with
+// body, standing in for $EDITOR in tests. Returns the script path.
+func fakeEditor(t *testing.T, body string) string {
+	t.Helper()
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	script := filepath.Join(t.TempDir(), "editor.sh")
+	content := "#!/bin/sh\ncat > \"$1\" <<'YAML'\n" + body + "YAML\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return script
+}
+
+func TestInitEditOpensEditor(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	editor := fakeEditor(t, "skills:\n  - repo: github.com/foo/bar\n    ref: v1\n")
+
+	cmd := exec.Command(bin, "init", "--edit")
+	cmd.Env = append(os.Environ(), "SKILLVENDOR_HOME="+home, "VISUAL=", "EDITOR="+editor)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("init --edit: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "manifest saved") {
+		t.Errorf("expected post-edit confirmation; got %q", out)
+	}
+
+	listOut, err := runCLI(t, bin, home, "list")
+	if err != nil {
+		t.Fatalf("list: %v\n%s", err, listOut)
+	}
+	if !strings.Contains(listOut, "github.com/foo/bar") || !strings.Contains(listOut, "ref:v1") {
+		t.Errorf("edited entry not reflected in list; got %q", listOut)
+	}
+}
+
+func TestInitEditRejectsInvalidManifest(t *testing.T) {
+	bin := buildBinary(t)
+	home := t.TempDir()
+	// include + exclude on the same entry is invalid.
+	editor := fakeEditor(t, "skills:\n  - repo: github.com/foo/bar\n    include: [a]\n    exclude: [b]\n")
+
+	cmd := exec.Command(bin, "init", "--edit")
+	cmd.Env = append(os.Environ(), "SKILLVENDOR_HOME="+home, "VISUAL=", "EDITOR="+editor)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("init --edit with invalid manifest should fail; got:\n%s", out)
+	}
+	if !strings.Contains(string(out), "invalid after edit") {
+		t.Errorf("expected validation error; got %q", out)
+	}
+	// The broken file is left on disk for the user to fix.
+	body, readErr := os.ReadFile(filepath.Join(home, ".config", "skillvendor", "skills.yaml"))
+	if readErr != nil || !strings.Contains(string(body), "exclude: [b]") {
+		t.Errorf("invalid manifest should remain on disk; err=%v body=%q", readErr, body)
+	}
+}

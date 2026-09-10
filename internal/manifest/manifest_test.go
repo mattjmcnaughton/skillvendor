@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,5 +119,61 @@ func TestRejectsInvalidYAML(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Error("expected error on malformed yaml")
+	}
+}
+
+func TestTemplateLoadsAsEmptyManifest(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "skills.yaml")
+	if err := WriteTemplate(path, false); err != nil {
+		t.Fatalf("WriteTemplate: %v", err)
+	}
+	m, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load template: %v", err)
+	}
+	if len(m.Skills) != 0 {
+		t.Errorf("template should declare no skills, got %+v", m.Skills)
+	}
+	if len(m.Targets) != 0 {
+		t.Errorf("template should declare no targets (so defaults apply), got %+v", m.Targets)
+	}
+	// Adding an entry to a template-seeded manifest round-trips.
+	if err := m.Upsert(Entry{Repo: "github.com/foo/bar"}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if err := m.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load after save: %v", err)
+	}
+	if len(got.Skills) != 1 {
+		t.Errorf("expected one entry after save, got %+v", got.Skills)
+	}
+}
+
+func TestWriteTemplateRefusesToOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "skills.yaml")
+	if err := os.WriteFile(path, []byte("skills:\n  - repo: r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteTemplate(path, false)
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("expected os.ErrExist, got %v", err)
+	}
+	body, _ := os.ReadFile(path)
+	if string(body) != "skills:\n  - repo: r\n" {
+		t.Errorf("existing manifest should be untouched, got %q", body)
+	}
+
+	if err := WriteTemplate(path, true); err != nil {
+		t.Fatalf("WriteTemplate(force): %v", err)
+	}
+	body, _ = os.ReadFile(path)
+	if string(body) != Template {
+		t.Errorf("force should overwrite with template, got %q", body)
 	}
 }
