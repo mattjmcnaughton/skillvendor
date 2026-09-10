@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/mattjmcnaughton/skillvendor/compare/v1.1.0...v1.2.0) (2026-09-10)
+
+
+### Features
+
+* **cli:** add init command to create the manifest ([#4](https://github.com/mattjmcnaughton/skillvendor/issues/4)) ([954475b](https://github.com/mattjmcnaughton/skillvendor/commit/954475ba043d3087e444b57daae153af015b90b1))
+
 # [1.1.0](https://github.com/mattjmcnaughton/skillvendor/compare/v1.0.1...v1.1.0) (2026-06-25)
 
 
