@@ -47,15 +47,47 @@ func (e Entry) Validate() error {
 	return nil
 }
 
+// ValidateConfig is the optional `validate` block. Command is run via
+// `/bin/sh -c` once per skill before it is installed; see the README's
+// "Validation" section for the contract.
+type ValidateConfig struct {
+	Command string `yaml:"command"`
+}
+
 type Manifest struct {
 	// Targets are directories that managed skills are symlinked into. When
 	// empty, DefaultTargets is used. `~` and `~/...` are expanded against
 	// paths.Home (so SKILLVENDOR_HOME redirects them too); absolute paths
 	// pass through unchanged.
 	Targets []string `yaml:"targets,omitempty"`
-	Skills  []Entry  `yaml:"skills"`
+	// Validate configures the validation hook. Absent means no validation.
+	Validate *ValidateConfig `yaml:"validate,omitempty"`
+	Skills   []Entry         `yaml:"skills"`
 
 	path string
+}
+
+// ValidateCommand returns the raw hook command, or "" when validation is
+// not configured. This is what the lockfile's hook hash is computed from.
+func (m *Manifest) ValidateCommand() string {
+	if m.Validate == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Validate.Command)
+}
+
+// ResolvedValidateCommand returns the hook command with a leading `~`
+// expanded the same way targets are. It is "" when validation is off.
+func (m *Manifest) ResolvedValidateCommand() (string, error) {
+	cmd := m.ValidateCommand()
+	if cmd == "" {
+		return "", nil
+	}
+	home, err := paths.Home()
+	if err != nil {
+		return "", err
+	}
+	return expandHome(cmd, home), nil
 }
 
 // DefaultTargets returns ~/.claude/skills and ~/.codex/skills. Honors SKILLVENDOR_HOME.
@@ -124,6 +156,9 @@ func Load(path string) (*Manifest, error) {
 		if err := e.Validate(); err != nil {
 			return nil, fmt.Errorf("manifest entry %d: %w", i, err)
 		}
+	}
+	if m.Validate != nil && m.ValidateCommand() == "" {
+		return nil, fmt.Errorf("parse %s: validate.command is required when validate is set", path)
 	}
 	return m, nil
 }

@@ -24,6 +24,17 @@ type LockEntry struct {
 	Ref       string   `yaml:"ref"`
 	SHA       string   `yaml:"sha"`
 	Installed []string `yaml:"installed,omitempty"`
+	// Validated records, per installed skill, the content and hook that the
+	// validation hook last approved. Absent when no hook is configured.
+	Validated map[string]Validation `yaml:"validated,omitempty"`
+}
+
+// Validation is one approval by the validation hook: the skill's git tree
+// object id and the SHA-256 of the hook command that approved it. The hook
+// is skipped while both still match.
+type Validation struct {
+	Tree string `yaml:"tree"`
+	Hook string `yaml:"hook"`
 }
 
 func (e LockEntry) Key() string {
@@ -76,6 +87,7 @@ func (l *Lock) Save() error {
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
 		return err
 	}
+	l.pruneValidated()
 	data, err := yaml.Marshal(l)
 	if err != nil {
 		return err
@@ -98,6 +110,31 @@ func (l *Lock) Save() error {
 }
 
 func (l *Lock) Path() string { return l.path }
+
+// pruneValidated drops validated records for skills that are no longer
+// installed from their entry.
+func (l *Lock) pruneValidated() {
+	for i := range l.Entries {
+		e := &l.Entries[i]
+		for skill := range e.Validated {
+			if !contains(e.Installed, skill) {
+				delete(e.Validated, skill)
+			}
+		}
+		if len(e.Validated) == 0 {
+			e.Validated = nil
+		}
+	}
+}
+
+func contains(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
 
 // Find returns the index of the entry matching repo+path, or -1.
 func (l *Lock) Find(repo, path string) int {

@@ -3,6 +3,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -118,5 +119,58 @@ func TestRejectsInvalidYAML(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Error("expected error on malformed yaml")
+	}
+}
+
+func TestValidateCommand(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SKILLVENDOR_HOME", home)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "skills.yaml")
+
+	cases := []struct {
+		name     string
+		body     string
+		raw      string
+		resolved string
+		wantErr  bool
+	}{
+		{"absent", "skills: []\n", "", "", false},
+		{"tilde", "validate:\n  command: ~/hooks/review.sh --strict \nskills: []\n", "~/hooks/review.sh --strict", filepath.Join(home, "hooks", "review.sh") + " --strict", false},
+		{"absolute", "validate:\n  command: /usr/local/bin/review\nskills: []\n", "/usr/local/bin/review", "/usr/local/bin/review", false},
+		{"empty command", "validate:\n  command: ''\nskills: []\n", "", "", true},
+		{"block without command", "validate: {}\nskills: []\n", "", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(path, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			m, err := Load(path)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := m.ValidateCommand(); got != tc.raw {
+				t.Errorf("ValidateCommand = %q, want %q", got, tc.raw)
+			}
+			got, err := m.ResolvedValidateCommand()
+			if err != nil || got != tc.resolved {
+				t.Errorf("ResolvedValidateCommand = %q, %v; want %q", got, err, tc.resolved)
+			}
+			// Round-trips through Save without the block appearing when absent.
+			if err := m.Save(); err != nil {
+				t.Fatal(err)
+			}
+			saved, _ := os.ReadFile(path)
+			if (tc.raw != "") != strings.Contains(string(saved), "validate:") {
+				t.Errorf("unexpected saved manifest:\n%s", saved)
+			}
+		})
 	}
 }
