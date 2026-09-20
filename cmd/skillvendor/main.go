@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,9 @@ import (
 	"github.com/mattjmcnaughton/skillvendor/internal/cache"
 	"github.com/mattjmcnaughton/skillvendor/internal/config"
 	"github.com/mattjmcnaughton/skillvendor/internal/manifest"
+	"github.com/mattjmcnaughton/skillvendor/internal/review"
 	"github.com/mattjmcnaughton/skillvendor/internal/symlink"
+	"github.com/mattjmcnaughton/skillvendor/internal/validate"
 	"github.com/mattjmcnaughton/skillvendor/internal/version"
 )
 
@@ -27,8 +30,19 @@ Usage:
   skillvendor sync [--update]
   skillvendor list
   skillvendor edit
+  skillvendor prompt [--schema]
+  skillvendor verdict [--fail-at <risk>]
   skillvendor version
 `
+
+// exitError carries a specific process exit code out of a subcommand. An
+// empty message means the command already reported the outcome itself.
+type exitError struct {
+	code int
+	msg  string
+}
+
+func (e *exitError) Error() string { return e.msg }
 
 func main() {
 	if len(os.Args) < 2 {
@@ -50,6 +64,10 @@ func main() {
 		err = cmdList(args)
 	case "edit":
 		err = cmdEdit(args)
+	case "prompt":
+		err = cmdPrompt(args)
+	case "verdict":
+		err = cmdVerdict(args)
 	case "version", "--version", "-v":
 		err = cmdVersion(args)
 	case "-h", "--help", "help":
@@ -58,6 +76,13 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", sub, usage)
 		os.Exit(2)
+	}
+	var ee *exitError
+	if errors.As(err, &ee) {
+		if ee.msg != "" {
+			fmt.Fprintln(os.Stderr, "error:", ee.msg)
+		}
+		os.Exit(ee.code)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -214,11 +239,25 @@ func cmdSync(args []string) error {
 	if err != nil {
 		return err
 	}
+	hookCmd, err := m.ResolvedValidateCommand()
+	if err != nil {
+		return err
+	}
+	h := hook{command: hookCmd, hash: validate.HookHash(m.ValidateCommand())}
 
 	manifestKeys := map[string]bool{}
+	var rejected []*rejectedError
 	for _, e := range m.Skills {
 		manifestKeys[e.Key()] = true
-		if err := syncEntry(e, c, inst, lock, *update); err != nil {
+		err := syncEntry(e, c, inst, lock, *update, h)
+		var rej *rejectedError
+		if errors.As(err, &rej) {
+			// The entry's symlinks and lock entry are left as they were;
+			// keep going so the remaining entries still sync.
+			rejected = append(rejected, rej)
+			continue
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -240,11 +279,37 @@ func cmdSync(args []string) error {
 	if err := lock.Save(); err != nil {
 		return err
 	}
+	if len(rejected) > 0 {
+		fmt.Println("rejected by validation hook:")
+		for _, r := range rejected {
+			fmt.Printf("  %s @ %s — %s\n", r.entry, short(r.sha), r.skill)
+		}
+		return fmt.Errorf("%d of %d entries rejected by validation hook", len(rejected), len(m.Skills))
+	}
 	fmt.Println("sync complete")
 	return nil
 }
 
-func syncEntry(e manifest.Entry, c *cache.Cache, inst *symlink.Installer, lock *config.Lock, update bool) error {
+// hook is the configured validation hook. An empty command disables it.
+type hook struct {
+	command string // resolved (`~` expanded) command for /bin/sh -c
+	hash    string // SHA-256 of the raw command, recorded in the lock
+}
+
+// rejectedError reports that the validation hook rejected one skill of an
+// entry, so the whole entry was skipped.
+type rejectedError struct {
+	entry, sha, skill string
+	err               error
+}
+
+func (r *rejectedError) Error() string {
+	return fmt.Sprintf("%s: %s %v", r.entry, r.skill, r.err)
+}
+
+func (r *rejectedError) Unwrap() error { return r.err }
+
+func syncEntry(e manifest.Entry, c *cache.Cache, inst *symlink.Installer, lock *config.Lock, update bool, h hook) error {
 	prev, _ := lock.Get(e.Repo, e.Path)
 
 	sha := prev.SHA
@@ -261,15 +326,59 @@ func syncEntry(e manifest.Entry, c *cache.Cache, inst *symlink.Installer, lock *
 		return err
 	}
 
-	skillsDir := worktree
-	if e.Path != "" {
-		skillsDir = filepath.Join(worktree, e.Path)
-	}
+	skillsDir := skillsDirIn(worktree, e.Path)
 	candidates, err := discoverSkills(skillsDir)
 	if err != nil {
 		return err
 	}
 	keep := filter(candidates, e.Include, e.Exclude)
+
+	// Prior approvals carry forward (Save prunes those no longer installed),
+	// so a hook that is removed and later restored does not re-review
+	// unchanged skills.
+	validated := make(map[string]config.Validation, len(keep))
+	for k, v := range prev.Validated {
+		validated[k] = v
+	}
+	if h.command != "" {
+		// Gate every kept skill before touching any symlink: the cache
+		// checkout is the quarantine.
+		for _, name := range keep {
+			tree, err := validate.TreeHash(worktree, e.Path, name)
+			if err != nil {
+				return err
+			}
+			if validate.Cached(prev, name, tree, h.hash) {
+				fmt.Printf("  %s @ %s — %s: skipped (cached)\n", e.Key(), short(sha), name)
+				continue
+			}
+			env := validate.Env{
+				Event:    "install",
+				Skill:    name,
+				SkillDir: filepath.Join(skillsDir, name),
+				Repo:     e.Repo,
+				Ref:      e.Ref,
+				SHA:      sha,
+			}
+			if toSet(prev.Installed)[name] {
+				env.Event = "update"
+				env.PrevSHA = prev.SHA
+				if prev.SHA != "" {
+					env.PrevSkillDir = filepath.Join(skillsDirIn(c.PathFor(e.Repo, prev.SHA), e.Path), name)
+				}
+			}
+			fmt.Printf("  %s @ %s — %s: validating (%s)\n", e.Key(), short(sha), name, env.Event)
+			if err := validate.Run(h.command, env); err != nil {
+				if errors.Is(err, validate.ErrRejected) {
+					fmt.Printf("  %s @ %s — %s: rejected\n", e.Key(), short(sha), name)
+					return &rejectedError{entry: e.Key(), sha: sha, skill: name, err: err}
+				}
+				return fmt.Errorf("validation hook for %s: %w", name, err)
+			}
+			fmt.Printf("  %s @ %s — %s: validated\n", e.Key(), short(sha), name)
+			validated[name] = config.Validation{Tree: tree, Hook: h.hash}
+		}
+	}
 
 	want := map[string]bool{}
 	for _, name := range keep {
@@ -295,12 +404,93 @@ func syncEntry(e manifest.Entry, c *cache.Cache, inst *symlink.Installer, lock *
 		Ref:       e.Ref,
 		SHA:       sha,
 		Installed: keep,
+		Validated: validated,
 	})
 	if len(keep) == 0 {
 		fmt.Printf("  %s @ %s — no skills found\n", e.Key(), short(sha))
 	} else {
 		fmt.Printf("  %s @ %s — installed %s\n", e.Key(), short(sha), strings.Join(keep, ", "))
 	}
+	return nil
+}
+
+// skillsDirIn returns the directory containing skills for an entry path
+// within a worktree ("" means the worktree root).
+func skillsDirIn(worktree, path string) string {
+	if path == "" {
+		return worktree
+	}
+	return filepath.Join(worktree, path)
+}
+
+// cmdPrompt prints a self-contained review prompt for the skill described
+// by the SKILLVENDOR_* environment, or with --schema only the JSON schema a
+// reviewer's response must match.
+func cmdPrompt(args []string) error {
+	fs := flag.NewFlagSet("prompt", flag.ContinueOnError)
+	schema := fs.Bool("schema", false, "print only the JSON response schema")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("prompt takes no arguments")
+	}
+	if *schema {
+		_, err := os.Stdout.Write(review.Schema())
+		return err
+	}
+	p, err := review.Build(review.InputsFromEnv())
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(os.Stdout, p)
+	return err
+}
+
+// cmdVerdict reads a reviewer's response from stdin and exits 0 when its
+// risk is below --fail-at, 1 when at or above, and 2 when no response with
+// a valid risk could be found (or anything else went wrong): a broken
+// pipeline must never pass a skill.
+func cmdVerdict(args []string) error {
+	err := verdict(args)
+	var ee *exitError
+	if err != nil && !errors.As(err, &ee) {
+		return &exitError{code: 2, msg: err.Error()}
+	}
+	return err
+}
+
+func verdict(args []string) error {
+	fs := flag.NewFlagSet("verdict", flag.ContinueOnError)
+	failAt := fs.String("fail-at", "medium", "lowest risk that fails: none, low, medium, high or critical")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("verdict takes no arguments")
+	}
+	threshold, ok := review.RiskLevel(*failAt)
+	if !ok {
+		return fmt.Errorf("invalid --fail-at %q (want none, low, medium, high or critical)", *failAt)
+	}
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("read stdin: %w", err)
+	}
+	resp, err := review.Locate(input)
+	if err != nil {
+		return err
+	}
+	level, _ := review.RiskLevel(resp.Risk)
+	fmt.Fprintf(os.Stderr, "risk: %s\nsummary: %s\n", resp.Risk, strings.TrimSpace(resp.Summary))
+	for _, f := range resp.Findings {
+		fmt.Fprintf(os.Stderr, "- %s\n", review.FormatFinding(f))
+	}
+	if level >= threshold {
+		fmt.Fprintf(os.Stderr, "verdict: fail (risk %s is at or above %s)\n", resp.Risk, *failAt)
+		return &exitError{code: 1}
+	}
+	fmt.Fprintf(os.Stderr, "verdict: pass (risk %s is below %s)\n", resp.Risk, *failAt)
 	return nil
 }
 
