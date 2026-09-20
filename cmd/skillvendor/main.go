@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mattjmcnaughton/skillvendor/internal/cache"
@@ -360,17 +361,23 @@ func syncEntry(e manifest.Entry, c *cache.Cache, inst *symlink.Installer, lock *
 				Ref:      e.Ref,
 				SHA:      sha,
 			}
-			if toSet(prev.Installed)[name] {
+			if slices.Contains(prev.Installed, name) {
 				env.Event = "update"
 				env.PrevSHA = prev.SHA
+				// The previous worktree is normally still cached, but not
+				// after a cache wipe or on a machine that only has the lock;
+				// then the hook gets no previous dir rather than a dead path.
 				if prev.SHA != "" {
-					env.PrevSkillDir = filepath.Join(skillsDirIn(c.PathFor(e.Repo, prev.SHA), e.Path), name)
+					prevDir := filepath.Join(skillsDirIn(c.PathFor(e.Repo, prev.SHA), e.Path), name)
+					if info, err := os.Stat(prevDir); err == nil && info.IsDir() {
+						env.PrevSkillDir = prevDir
+					}
 				}
 			}
 			fmt.Printf("  %s @ %s — %s: validating (%s)\n", e.Key(), short(sha), name, env.Event)
 			if err := validate.Run(h.command, env); err != nil {
 				if errors.Is(err, validate.ErrRejected) {
-					fmt.Printf("  %s @ %s — %s: rejected\n", e.Key(), short(sha), name)
+					fmt.Printf("  %s @ %s — %s: %v\n", e.Key(), short(sha), name, err)
 					return &rejectedError{entry: e.Key(), sha: sha, skill: name, err: err}
 				}
 				return fmt.Errorf("validation hook for %s: %w", name, err)

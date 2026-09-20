@@ -385,7 +385,11 @@ proportionate to that purpose.
 
 func writeInventory(w *strings.Builder, root string, items []item) {
 	fmt.Fprintf(w, "## Inventory\n\nSkill directory: %s\n", strconv.Quote(root))
-	w.WriteString("Columns: status, size in bytes, path, notes. Paths are relative to the skill directory.\n\n")
+	w.WriteString(`Columns: status, size in bytes, path, notes. Paths are relative to the skill
+directory. Status is relative to the previously installed version, which may
+never have been reviewed: review all inlined content, whatever its status.
+
+`)
 	for _, it := range items {
 		fmt.Fprintf(w, "%-9s %8d  %s", it.status, it.size, strconv.Quote(it.path))
 		if it.link != "" {

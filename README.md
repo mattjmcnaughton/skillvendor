@@ -97,7 +97,7 @@ The hook runs once per skill, after the manifest's `include`/`exclude` filters a
 | `SKILLVENDOR_EVENT` | `install` or `update` |
 | `SKILLVENDOR_SKILL` | skill name (dir basename) |
 | `SKILLVENDOR_SKILL_DIR` | absolute path of the new skill dir in the cache |
-| `SKILLVENDOR_PREV_SKILL_DIR` | previous version's dir in the cache; empty on `install` |
+| `SKILLVENDOR_PREV_SKILL_DIR` | previous version's dir in the cache; empty on `install`, or if that worktree is no longer cached |
 | `SKILLVENDOR_REPO`, `SKILLVENDOR_REF`, `SKILLVENDOR_SHA` | entry identity and resolved commit |
 | `SKILLVENDOR_PREV_SHA` | previously locked commit; empty on `install` |
 

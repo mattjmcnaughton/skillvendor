@@ -87,7 +87,12 @@ func (m *Manifest) ResolvedValidateCommand() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return expandHome(cmd, home), nil
+	// Only the leading `~` is expanded; the rest of the command is shell
+	// text, so it must not be path-cleaned like a target would be.
+	if cmd == "~" || strings.HasPrefix(cmd, "~/") || strings.HasPrefix(cmd, "~ ") {
+		return home + cmd[1:], nil
+	}
+	return cmd, nil
 }
 
 // DefaultTargets returns ~/.claude/skills and ~/.codex/skills. Honors SKILLVENDOR_HOME.

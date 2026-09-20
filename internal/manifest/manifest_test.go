@@ -138,6 +138,8 @@ func TestValidateCommand(t *testing.T) {
 		{"absent", "skills: []\n", "", "", false},
 		{"tilde", "validate:\n  command: ~/hooks/review.sh --strict \nskills: []\n", "~/hooks/review.sh --strict", filepath.Join(home, "hooks", "review.sh") + " --strict", false},
 		{"absolute", "validate:\n  command: /usr/local/bin/review\nskills: []\n", "/usr/local/bin/review", "/usr/local/bin/review", false},
+		{"arguments are not path-cleaned", "validate:\n  command: ~/h.sh --url https://x.example/a/../b//c\nskills: []\n", "~/h.sh --url https://x.example/a/../b//c", home + "/h.sh --url https://x.example/a/../b//c", false},
+		{"tilde only in arguments is left to the shell", "validate:\n  command: sh ~/h.sh\nskills: []\n", "sh ~/h.sh", "sh ~/h.sh", false},
 		{"empty command", "validate:\n  command: ''\nskills: []\n", "", "", true},
 		{"block without command", "validate: {}\nskills: []\n", "", "", true},
 	}

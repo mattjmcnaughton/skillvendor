@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/mattjmcnaughton/skillvendor/internal/paths"
 	"gopkg.in/yaml.v3"
@@ -118,7 +119,7 @@ func (l *Lock) pruneValidated() {
 	for i := range l.Entries {
 		e := &l.Entries[i]
 		for skill := range e.Validated {
-			if !contains(e.Installed, skill) {
+			if !slices.Contains(e.Installed, skill) {
 				delete(e.Validated, skill)
 			}
 		}
@@ -126,15 +127,6 @@ func (l *Lock) pruneValidated() {
 			e.Validated = nil
 		}
 	}
-}
-
-func contains(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Find returns the index of the entry matching repo+path, or -1.

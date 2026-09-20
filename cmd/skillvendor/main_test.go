@@ -331,7 +331,7 @@ func TestEndToEndValidationHook(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("sync with rejection: exit %d, want 1\n%s%s", code, out, errOut)
 	}
-	if !strings.Contains(out, "evil: rejected") || !strings.Contains(out, "rejected by validation hook:") {
+	if !strings.Contains(out, "evil: rejected by validation hook (exit status 1)") || !strings.Contains(out, "rejected by validation hook:") {
 		t.Errorf("missing rejection output:\n%s", out)
 	}
 	for _, skill := range []string{"pdf", "docx", "evil"} {
@@ -461,6 +461,27 @@ func TestEndToEndValidationHook(t *testing.T) {
 	target, err := os.Readlink(filepath.Join(home, ".claude", "skills", "pdf"))
 	if err != nil || !strings.Contains(target, "@"+sha2+"/") || strings.Contains(target, sha3) {
 		t.Errorf("pdf symlink should still point at the last good version: %q, %v", target, err)
+	}
+
+	// 7. With the previous worktree gone (cache wiped, or a lock carried to
+	//    another machine), an update still runs but with no previous dir.
+	if err := os.RemoveAll(cacheRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rejectFile, []byte("evil\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(log, 0); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code = runCLIStdin(t, bin, home, "", "sync", "--update")
+	if code != 0 {
+		t.Fatalf("sync --update after cache wipe: exit %d\n%s%s", code, out, errOut)
+	}
+	wipeLog := readLog()
+	if !strings.Contains(wipeLog, "--- update pdf") || !strings.Contains(wipeLog, "SKILLVENDOR_PREV_SHA="+sha2) ||
+		!strings.Contains(wipeLog, "SKILLVENDOR_PREV_SKILL_DIR=\n") {
+		t.Errorf("expected update with empty PREV_SKILL_DIR after cache wipe:\n%s", wipeLog)
 	}
 }
 
