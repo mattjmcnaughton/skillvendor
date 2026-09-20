@@ -1,8 +1,9 @@
 # Spec: validation hook
 
-Status: draft. Scope: an optional, user-configured hook that gates skills on
-install and update, plus two helper subcommands that make an LLM-backed
-review a one-line hook.
+Status: accepted (v1 scope). An optional, user-configured hook that gates
+skills on install and update, plus two helper subcommands that make an
+LLM-backed review a one-line hook without skillvendor depending on any AI
+CLI.
 
 ## Goals
 
@@ -10,35 +11,28 @@ review a one-line hook.
   Codex) until it has passed the user's validator.
 - skillvendor takes no dependency on any AI CLI. It emits the prompt and
   parses the response; the user picks what runs in between.
-- Expensive validators run only when a skill's content actually changes.
+- Expensive validators run only when a skill's content or the hook changes.
 
 ## Non-goals (v1)
 
 - Partial success within a manifest entry (one skill passes, another fails).
 - Batch invocation (one hook call for many skills).
-- Built-in presets (`validate: preset: claude`). Sugar for later.
+- Built-in presets (`validate: preset: claude`).
 - Hooks declared by the vendored repo itself. Never: that is code execution.
+- Everything under "Later" below.
 
 ## Manifest
 
 ```yaml
 validate:
-  command: ~/.config/skillvendor/hooks/review.sh   # string (run via $SHELL -c) or argv list
-  on_failure: block      # block | warn. Default block.
-  timeout: 5m            # Default 5m. Timeout counts as failure.
-  events: [install, update]   # Default both.
-
-skills:
-  - repo: github.com/me/my-skills
-    validate: false      # per-entry opt-out. Default true.
+  command: ~/.config/skillvendor/hooks/review.sh
 ```
 
-`~` in `command` expands like `targets`. An absent `validate` block disables
-the feature entirely; existing manifests are unaffected.
-
-Overrides: `sync --no-validate` skips the hook for one run. `sync
---revalidate` ignores cached results. `SKILLVENDOR_VALIDATE=0` is equivalent
-to `--no-validate` (for CI and scripts).
+`command` is a string run via `/bin/sh -c`. `~` expands like `targets`. An
+absent `validate` block disables the feature; existing manifests are
+unaffected. There are no other keys and no flags: to skip validation, remove
+the block; to skip one repo, exit 0 early in the hook (see README pattern
+below).
 
 ## Sync flow
 
@@ -46,30 +40,29 @@ Today `syncEntry` does: resolve ref, fetch to cache, discover skills, filter,
 symlink, update lock. The hook runs between filter and symlink. The cache
 checkout is the quarantine.
 
-For each entry with validation enabled, and for each kept skill:
+For each entry, when `validate.command` is set, and for each kept skill:
 
 1. Compute the skill's git tree hash:
    `git -C <worktree> rev-parse HEAD:<path>/<skill>`.
 2. Look up the lock's `validated` record for this skill. If the tree hash and
    the hook hash both match, skip the hook.
-3. Otherwise, determine the event. `install` when the skill has no managed
-   symlink yet; `update` otherwise. Skip if the event is not in `events`.
-4. Run the hook (contract below). Exit 0 records the result and continues.
-   Nonzero, or timeout, is a failure.
+3. Otherwise run the hook (contract below). Exit 0 records the result and
+   continues. Nonzero is a failure.
 
-Failure semantics, `on_failure: block`: the whole entry is skipped. Its
-symlinks and lock entry stay as they were, so a failed update leaves the last
-good version installed. Sync continues with the remaining entries, prints a
-summary of rejected entries at the end, and exits 1.
+Event is `update` when the lock already has an entry for this
+(repo, path) whose `installed` lists the skill; otherwise `install`.
 
-`on_failure: warn`: install proceeds, the failure is printed, exit 0. Nothing
-is recorded as validated, so the hook runs again next sync.
+Failure: the whole entry is skipped. Its symlinks and lock entry stay as they
+were, so a failed update leaves the last good version installed. Sync
+continues with the remaining entries, prints a summary of rejected entries
+at the end, and exits 1.
 
 ## Hook contract
 
 Run once per skill. Working directory is the skill's cached directory. Stdin,
 stdout and stderr are inherited from skillvendor so a hook may prompt the
-user interactively. Environment:
+user interactively. No timeout: a hook that needs one wraps itself in
+`timeout(1)`. Environment:
 
 | Variable | Value |
 |---|---|
@@ -103,25 +96,16 @@ entries:
 ```
 
 `tree` is the skill's git tree object id. `hook` is the SHA-256 of the
-canonicalised `validate.command`. Changing the validator invalidates every
-prior approval. Entries in `validated` for skills no longer in `installed`
-are dropped on save.
+trimmed `validate.command` string. Changing the validator invalidates every
+prior approval, so a new hook is exercised by the next `sync`. Entries in
+`validated` for skills no longer in `installed` are dropped on save.
 
-## `skillvendor validate [<skill>...]`
+## `skillvendor prompt [--schema]`
 
-Runs the hook on demand against installed skills, ignoring cached results,
-and updates `validated` on success. With no arguments, every installed skill.
-Event is always `update` with `SKILLVENDOR_PREV_*` empty. Exit 1 if any fail.
-Intended for testing a new hook and re-auditing after changing it.
-
-## `skillvendor prompt [<skill>] [--schema]`
-
-Prints a self-contained review prompt to stdout.
-
-With no argument, inputs come from the `SKILLVENDOR_*` environment (the hook
-case). With a skill name, the skill is resolved from the lock and cache
-(ad-hoc review). `--schema` prints only the JSON schema below and ignores
-other inputs.
+Prints a self-contained review prompt to stdout. Inputs come from the
+`SKILLVENDOR_*` environment. For ad-hoc use outside a hook, set
+`SKILLVENDOR_SKILL_DIR` by hand (e.g. to an installed symlink). `--schema`
+prints only the JSON schema below.
 
 Prompt contents, in order:
 
@@ -133,15 +117,22 @@ Prompt contents, in order:
    access, privilege escalation, destructive filesystem operations,
    obfuscation (encoded payloads, minified scripts), instructions to disable
    safeguards, executable content that cannot be read.
-3. **Inventory.** Every file with size and SHA-256. Binary files, and text
-   files over 64 KiB, are listed but not inlined and flagged `unreviewable`
-   for the rubric. Total inlined content is capped at 512 KiB, largest files
-   dropped first.
+3. **Inventory.** Every path with size and status. On `update`, status is
+   `added`, `changed`, `unchanged` or `removed` relative to
+   `SKILLVENDOR_PREV_SKILL_DIR`; on `install`, all `added`. Binary files,
+   and text files over 64 KiB, are listed but not inlined and flagged
+   `unreviewable`. Total inlined content is capped at 512 KiB, largest files
+   dropped first. Caps are constants, not configuration.
 4. **Contents.** Each inlined file wrapped in delimiters that include the
    path and a per-run random nonce, so content cannot forge a delimiter.
-5. **Diff.** On `update`, a unified diff of previous vs new skill dir.
-6. **Output instruction.** Respond with a single JSON object matching the
+5. **Output instruction.** Respond with a single JSON object matching the
    schema, and nothing after it.
+
+Symlinks inside the skill dir are never followed, for inventory, sizing or
+inlining. They are listed with their link target and flagged `unreviewable`
+if the target resolves outside the skill dir. Without this rule a vendored
+`link -> ~/.ssh/id_ed25519` would inline the user's private key into a
+prompt sent to an LLM.
 
 ### Schema (`skillvendor/review/v1`)
 
@@ -190,46 +181,64 @@ Locating the object, in order:
 3. Stdin parses as JSON matching the schema directly.
 4. Otherwise the last well-formed JSON object in the text, fenced or not.
 
-The object is validated against the schema. Summary and findings are printed
-to stderr, one finding per line.
+The object is decoded into a Go struct; `risk` must be one of the five enum
+values. No JSON Schema library: findings are display-only and are printed to
+stderr with the summary, one finding per line, whatever their shape.
 
 Exit codes: `0` risk below threshold. `1` risk at or above threshold. `2` no
-valid object found (fails closed; distinguishes a broken pipeline from a
-risky skill).
+object with a valid `risk` found (fails closed; distinguishes a broken
+pipeline from a risky skill).
 
-## Reference hook
+## README
 
-Shipped as `examples/hooks/claude-review.sh` and referenced from the README:
+New "Validation" section after "Sync": manifest key, hook contract, the two
+helper commands, and this reference pipeline as the worked example (no
+shipped script):
 
 ```sh
 #!/bin/sh
 set -eu
+# Skip repos you own.
+case "$SKILLVENDOR_REPO" in github.com/me/*) exit 0 ;; esac
 skillvendor prompt \
-  | claude --bare -p --permission-mode dontAsk --max-turns 1 \
+  | timeout 5m claude --bare -p --permission-mode dontAsk --max-turns 1 \
       --output-format json --json-schema "$(skillvendor prompt --schema)" \
   | skillvendor verdict --fail-at medium
 ```
 
 `--bare` stops Claude Code loading the user's own skills, including the one
 under review. `dontAsk` with no allowlist denies every tool call, so the
-model can only read what the prompt inlined. A second example,
-`static-check.sh`, greps for the obvious patterns and cannot be talked out of
-its answer; the README suggests chaining both.
+model can only read what the prompt inlined. The README notes that an LLM
+review is a filter, not a proof.
 
 ## Implementation notes
 
-- New package `internal/validate`: hook runner (timeout, env, passthrough),
-  tree hash, hook hash, cache lookup.
+- New package `internal/validate`: hook runner (env, stdio passthrough),
+  tree hash, hook hash, lock lookup.
 - New package `internal/review`: prompt builder, embedded schema, response
-  locator and validator. No network, no exec. Unit-testable with fixture dirs.
-- `cmd/skillvendor`: wire `validate`, `prompt`, `verdict`; extend `sync` and
-  `syncEntry`; `list` shows `validated` or `unvalidated` per skill.
-- README: new "Validation" section after "Sync", covering manifest, contract,
-  helper commands and the reference hook.
+  locator. No network, no exec. Unit-testable with fixture dirs.
+- `cmd/skillvendor`: wire `prompt` and `verdict`; extend `sync` and
+  `syncEntry`. Sync output shows `validated` / `skipped (cached)` / `rejected`
+  per skill.
 
-## Open questions
+## Later
 
-- Should `sync` print a per-skill changed-files summary on update even with
-  no hook configured? Cheap and useful; leaning yes.
-- Should `verdict` persist findings (not just tree and hook hash) so `list`
-  can show the last review? Deferred until there is a consumer.
+Deferred, with the trigger that would bring each back:
+
+- `command` as an argv list: a quoting problem the string form cannot express.
+- `on_failure: warn`: a request for advisory mode after living with block.
+- `timeout` key: hook authors find `timeout(1)` insufficient.
+- `events` filter: someone wants to gate only install or only update.
+- Per-entry `validate: false`: the early-exit hook pattern proves annoying.
+- `sync --no-validate`: editing the manifest proves too slow as an escape
+  hatch. Must not write `validated`.
+- `skillvendor validate`: a need to re-audit with an unchanged hook and
+  unchanged content.
+- `prompt <skill>` resolved from lock and cache: request.
+- Unified diff on update: file-status markers prove insufficient for
+  catching small changes in large skills.
+- `static-check.sh` grep-based example: LLM review shown to be manipulable
+  in practice.
+- `list` showing validated state: users ask which skills were reviewed.
+- Persisting findings in the lock: a consumer for them.
+- Changed-files summary on update with no hook: separate change.
