@@ -86,7 +86,7 @@ validate:
   command: ~/.config/skillvendor/hooks/review.sh
 ```
 
-`command` is a string run via `/bin/sh -c`; a leading `~` expands like `targets`. There are no other keys and no flags. To turn validation off, remove the block; to skip one repo, exit 0 early in the hook (see the example below).
+`command` is a string run via `/bin/sh -c`; a leading `~` expands like `targets`. Because the hook runs inside the vendored skill directory, the program must be an absolute path (or `~/...`) or a name found on `PATH`; a relative path like `./review.sh` is rejected, since it would resolve to the repo's own content. There are no other keys and no flags. To turn validation off, remove the block; to skip one repo, exit 0 early in the hook (see the example below).
 
 ### Hook contract
 

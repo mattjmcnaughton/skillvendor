@@ -76,6 +76,25 @@ func (m *Manifest) ValidateCommand() string {
 	return strings.TrimSpace(m.Validate.Command)
 }
 
+// checkValidateCommand rejects an empty hook command and one whose program
+// is a relative path. The hook runs with the vendored skill directory as its
+// working directory, so `./review.sh` would resolve to attacker-controlled
+// content rather than to the user's own script.
+func (m *Manifest) checkValidateCommand() error {
+	cmd, err := m.ResolvedValidateCommand()
+	if err != nil {
+		return err
+	}
+	if cmd == "" {
+		return errors.New("validate.command is required when validate is set")
+	}
+	prog := strings.Fields(cmd)[0]
+	if strings.Contains(prog, "/") && !filepath.IsAbs(prog) {
+		return fmt.Errorf("validate.command %q: program must be an absolute path (or ~/...) or a name found on PATH; the hook runs inside the skill directory", prog)
+	}
+	return nil
+}
+
 // ResolvedValidateCommand returns the hook command with a leading `~`
 // expanded the same way targets are. It is "" when validation is off.
 func (m *Manifest) ResolvedValidateCommand() (string, error) {
@@ -162,8 +181,10 @@ func Load(path string) (*Manifest, error) {
 			return nil, fmt.Errorf("manifest entry %d: %w", i, err)
 		}
 	}
-	if m.Validate != nil && m.ValidateCommand() == "" {
-		return nil, fmt.Errorf("parse %s: validate.command is required when validate is set", path)
+	if m.Validate != nil {
+		if err := m.checkValidateCommand(); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
 	}
 	return m, nil
 }

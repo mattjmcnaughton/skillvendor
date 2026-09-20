@@ -142,6 +142,9 @@ func TestValidateCommand(t *testing.T) {
 		{"tilde only in arguments is left to the shell", "validate:\n  command: sh ~/h.sh\nskills: []\n", "sh ~/h.sh", "sh ~/h.sh", false},
 		{"empty command", "validate:\n  command: ''\nskills: []\n", "", "", true},
 		{"block without command", "validate: {}\nskills: []\n", "", "", true},
+		{"relative program resolves in the skill dir", "validate:\n  command: ./review.sh\nskills: []\n", "", "", true},
+		{"relative nested program", "validate:\n  command: hooks/review.sh --x\nskills: []\n", "", "", true},
+		{"bare name uses PATH", "validate:\n  command: review-skill --strict\nskills: []\n", "review-skill --strict", "review-skill --strict", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
