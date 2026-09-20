@@ -29,7 +29,6 @@ func HookHash(command string) string {
 // worktree, where dir is the manifest entry's path ("" for the repo root).
 func TreeHash(worktree, dir, skill string) (string, error) {
 	rel := path.Join(filepath.ToSlash(dir), skill)
-	rel = strings.TrimPrefix(rel, "./")
 	cmd := exec.Command("git", "-C", worktree, "rev-parse", "HEAD:"+rel)
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()

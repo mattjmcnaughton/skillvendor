@@ -114,7 +114,7 @@ func build(in Inputs, nonce string) (string, error) {
 			return "", err
 		}
 	}
-	items := inventory(cur, prev)
+	items := inventory(root, cur, prev)
 
 	var out strings.Builder
 	writeFraming(&out, in, nonce)
@@ -228,7 +228,7 @@ func isBinary(data []byte) bool {
 
 // inventory merges the current and previous scans into sorted items with
 // statuses, flags, and the content to inline, applying the size caps.
-func inventory(cur, prev map[string]entry) []item {
+func inventory(root string, cur, prev map[string]entry) []item {
 	var items []item
 	for p, e := range cur {
 		it := item{path: p, size: e.size, link: e.link, status: "added"}
@@ -239,6 +239,8 @@ func inventory(cur, prev map[string]entry) []item {
 			}
 		}
 		switch {
+		case e.isLink && outsideRoot(root, p, e.link):
+			it.flag = "unreviewable: symlink target outside skill dir, not followed"
 		case e.isLink:
 			it.flag = "symlink, not followed"
 		case e.binary:
@@ -301,8 +303,19 @@ func outsideRoot(root, rel, target string) bool {
 	return r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator))
 }
 
+// safeName renders a value that originates in the vendored repo (the skill
+// name) so it cannot smuggle text into the trusted part of the prompt.
+func safeName(s string) string {
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return strconv.Quote(s)
+		}
+	}
+	return s
+}
+
 func writeFraming(w *strings.Builder, in Inputs, nonce string) {
-	fmt.Fprintf(w, "# Skill review: %s (%s)\n\n", in.Skill, in.Event)
+	fmt.Fprintf(w, "# Skill review: %s (%s)\n\n", safeName(in.Skill), in.Event)
 	w.WriteString(`You are a security reviewer. A "skill" is a directory of instructions and
 supporting files that an AI coding agent (Claude Code, Codex) loads and
 follows automatically when the skill is invoked, with the user's permissions.
@@ -310,7 +323,7 @@ Hostile content in a skill can make the agent leak secrets, contact remote
 hosts, escalate privileges, or damage the user's system.
 
 `)
-	fmt.Fprintf(w, "Skill: %s\nEvent: %s\n", in.Skill, in.Event)
+	fmt.Fprintf(w, "Skill: %s\nEvent: %s\n", safeName(in.Skill), in.Event)
 	if in.Repo != "" {
 		fmt.Fprintf(w, "Repo: %s\n", in.Repo)
 	}
@@ -377,9 +390,6 @@ func writeInventory(w *strings.Builder, root string, items []item) {
 		fmt.Fprintf(w, "%-9s %8d  %s", it.status, it.size, strconv.Quote(it.path))
 		if it.link != "" {
 			fmt.Fprintf(w, "  -> %s", strconv.Quote(it.link))
-			if it.status != "removed" && outsideRoot(root, it.path, it.link) {
-				fmt.Fprintf(w, "  (unreviewable: symlink target outside skill dir)")
-			}
 		}
 		if it.flag != "" {
 			fmt.Fprintf(w, "  (%s)", it.flag)

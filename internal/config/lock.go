@@ -25,7 +25,8 @@ type LockEntry struct {
 	SHA       string   `yaml:"sha"`
 	Installed []string `yaml:"installed,omitempty"`
 	// Validated records, per installed skill, the content and hook that the
-	// validation hook last approved. Absent when no hook is configured.
+	// validation hook last approved. Absent until a hook has approved
+	// something; approvals persist while the skill stays installed.
 	Validated map[string]Validation `yaml:"validated,omitempty"`
 }
 
