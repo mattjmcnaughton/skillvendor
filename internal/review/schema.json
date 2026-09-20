@@ -1,0 +1,26 @@
+{
+  "$id": "skillvendor/review/v1",
+  "type": "object",
+  "required": ["risk", "summary", "findings"],
+  "additionalProperties": false,
+  "properties": {
+    "risk": { "enum": ["none", "low", "medium", "high", "critical"] },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category", "file", "description"],
+        "properties": {
+          "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+          "category": { "enum": ["exfiltration", "network", "privilege-escalation",
+                                 "destructive", "obfuscation", "reviewer-manipulation",
+                                 "unreviewable", "other"] },
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "description": { "type": "string" }
+        }
+      }
+    }
+  }
+}
